@@ -1,6 +1,6 @@
 # conda activate langgraph-start
 # pip install langchain langgraph langchain-openai langsmith langchainhub duckduckgo-search beautifulsoup4 gradio python-dotenv
-import functools, os, operator, requests, json
+import functools, operator, requests, os, json
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 from langchain.agents import AgentExecutor, create_openai_tools_agent
@@ -26,14 +26,14 @@ def search_web(query: str)-> str:
        results = [r for r in ddgs.text(query, max_results=5)]
        return results if results else "No results found."
    
-   @tool('process_content', return_direct=False)
-   def process_content(url: str)-> str:
-       """Processes the content of a webpage."""
-       response = requests.get(url)
-       soup = BeautifulSoup(response.text, 'html.parser')
-       return soup.get_text()
+@tool('process_content', return_direct=False)
+def process_content(url: str)-> str:
+    """Processes the content of a webpage."""
+    response = requests.get(url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+    return soup.get_text()
    
-   tools = [search_web, process_content]
+tools = [search_web, process_content]
 
 #agents
 def create_agent(llm: ChatOpenAI, tools: list, system_prompt: str):
@@ -63,6 +63,69 @@ system_prompt = (
     " indicate that with 'FINISH'."
 )
 
+options = ["FINISH"] + members
+function_def = {
+    "name": "route",
+    "description": "Select the next role.",
+    "parameters": {
+        "title": "routeSchema",
+        "type": "object",
+        "properties": {"next": {"title": "Next", "anyOf": [{"enum": options}] }},
+        "required": ["next"],
+    },
+}
+
+prompt = ChatPromptTemplate.from_messages([
+    ("system", system_prompt),
+    MessagesPlaceholder(variable_name="messages"),
+    ("system", "Given the conversation above, who should act next? Or should we FINISH? Select one of: {options}"),
+]).partial(options=str(options), members=", ".join(members))
+
+supervisor_chain = (prompt | llm.bind_functions(functions=[function_def], function_call="route") | JsonOutputFunctionsParser())
+
+search_agent = create_agent(llm, tools, "You are a web searcher. Search the internet for information.")
+search_node = functools.partial(agent_node, agent=search_agent, name="Web_Searcher")
+
+insights_research_agent = create_agent(llm, tools, 
+        """You are an insight researcher. Do the following step by step. 
+        Based on the provided content first identify the list of topics,
+        then search the internet for each topic one by one
+        and finally find insights for each topic one by one.
+        Include the insights and sources in the final response
+        """)
+insights_research_node = functools.partial(agent_node, agent=insights_research_agent, name="Insight_Researcher")
+
+# Define the Agent State, Edges and Graph
+class AgentState(TypedDict):
+    messages: Annotated[Sequence[BaseMessage], operator.add]
+    next: str
+
+workflow = StateGraph(AgentState)
+workflow.add_node("Web_Searcher", search_node)
+workflow.add_node("Insight_Researcher", insights_research_node)
+workflow.add_node("supervisor", supervisor_chain)
+
+# Define edges
+for member in members:
+    workflow.add_edge(member, "supervisor")
+
+conditional_map = {k: k for k in members}
+conditional_map["FINISH"] = END
+workflow.add_conditional_edges("supervisor", lambda x: x["next"], conditional_map)
+workflow.set_entry_point("supervisor")
+
+graph = workflow.compile()
+
+# run it... lfg
+for s in graph.stream({
+    "messages": [HumanMessage(content="""Search for the latest AI technology trends in 2024,
+            summarize the content. After summarizing the content pass it on to insight researcher
+            to provide insights for each topic""")]
+    }):
+
+    if "__end__" not in s:
+        print(s)
+        print("----")
 
 
 #ref https://www.youtube.com/watch?v=v9fkbTxPzs0
