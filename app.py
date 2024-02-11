@@ -117,15 +117,18 @@ workflow.set_entry_point("supervisor")
 graph = workflow.compile()
 
 # run it... lfg
-for s in graph.stream({
-    "messages": [HumanMessage(content="""Search for the latest AI technology trends in 2024,
-            summarize the content. After summarizing the content pass it on to insight researcher
-            to provide insights for each topic""")]
-    }):
+def run_graph(input_message):
+    response = graph.invoke({
+        "messages": [HumanMessage(content=input_message)]
+    })
+    return json.dumps(response['messages'][1].content, indent=2)
 
-    if "__end__" not in s:
-        print(s)
-        print("----")
+inputs = gr.Textbox(lines=2, placeholder="Enter your query here...")
+outputs = gr.Label(value="Result will be displayed here")
 
+demo = gr.Interface(fn=run_graph, inputs=inputs, outputs=outputs)
+demo.launch()
+
+# NOTE: using gpt 3.5 turbo may overflow max context length (too many tokens in request) 
 
 #ref https://www.youtube.com/watch?v=v9fkbTxPzs0
