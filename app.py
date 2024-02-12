@@ -130,5 +130,6 @@ demo = gr.Interface(fn=run_graph, inputs=inputs, outputs=outputs)
 demo.launch()
 
 # NOTE: using gpt 3.5 turbo may overflow max context length (too many tokens in request) 
+# look at https://python.langchain.com/docs/expression_language/cookbook/prompt_size
 
 #ref https://www.youtube.com/watch?v=v9fkbTxPzs0
